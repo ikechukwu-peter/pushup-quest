@@ -1,0 +1,7 @@
+# The deployed site is only the app. Tests, tooling and docs stay in the repo.
+tests/
+scripts/
+docs/
+*.md
+package.json
+node_modules/

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Pushup Quest</title>
+<meta name="description" content="Your camera counts your reps. Every rep is a strike.">
+<meta name="theme-color" content="#0b0a14">
+<meta name="color-scheme" content="dark">
+<!-- Privacy lock: the app may only load files from and talk to its own server.
+     Any attempt to send data anywhere else is blocked by the browser. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self'; worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pushup Quest">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="modulepreload" href="pose.js">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="sky" aria-hidden="true"></div>
+<div id="app">
+  <main id="view"></main>
+  <nav class="tabbar" id="tabbar">
+    <button data-tab="home" class="on"><img class="art" src="art/house.webp" alt=""><span>Home</span></button>
+    <button data-tab="realm"><img class="art" src="art/map.webp" alt=""><span>Realm</span></button>
+    <button class="tab-cta" data-act="battle" aria-label="Start battle"><img class="art" src="art/camera.webp" alt=""></button>
+    <button data-tab="armory"><img class="art" src="art/swords.webp" alt=""><span>Armory</span></button>
+    <button data-tab="hero"><img class="art" src="art/trophy.webp" alt=""><span>Hero</span></button>
+  </nav>
+</div>
+<div id="battle" hidden></div>
+<div id="sheet" hidden></div>
+<div id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>

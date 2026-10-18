@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Landmark extractor</title>
+<script type="module">
+// Driven by extract-landmarks.mjs. Runs the same pose model as the app over
+// pre-extracted JPEG frames (served under /__frames/), one frame at a time.
+// Frames are fed as images rather than by seeking a <video>: headless Chrome
+// does not repaint a seeked video, which silently repeats the first frame.
+import { FilesetResolver, PoseLandmarker } from '../vendor/vision_bundle.mjs';
+
+const base = new URL('../', import.meta.url);
+const fileset = await FilesetResolver.forVisionTasks(new URL('vendor/wasm', base).href);
+const landmarker = await PoseLandmarker.createFromOptions(fileset, {
+  baseOptions: { modelAssetPath: new URL('vendor/pose_landmarker_lite.task', base).href, delegate: 'GPU' },
+  runningMode: 'VIDEO',
+  numPoses: 1,
+});
+
+window.extract = async (count, fps) => {
+  const out = { fps, frames: [] };
+  for (let i = 1; i <= count; i++) {
+    const blob = await (await fetch(`/__frames/${String(i).padStart(5, '0')}.jpg`)).blob();
+    const bmp = await createImageBitmap(blob);
+    out.width = bmp.width; out.height = bmp.height;
+    const t = (i - 1) / fps;
+    const lm = landmarker.detectForVideo(bmp, Math.round(t * 1000) + 1).landmarks?.[0];
+    bmp.close();
+    out.frames.push({ t: +t.toFixed(3), lm: lm ? lm.map(p => [p.x, p.y, p.visibility ?? 0]) : null });
+  }
+  return JSON.stringify(out);
+};
+window.ready = true;
+</script>

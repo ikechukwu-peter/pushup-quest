@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Pushup Quest",
+    "subtitle": "Camera rep counter, on-device. Nothing leaves the phone.",
+    "output": "../architecture.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "camera",
+      "type": "frontend",
+      "label": "Camera",
+      "sublabel": "getUserMedia 640×480",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "front / back"
+    },
+    {
+      "id": "pose",
+      "type": "backend",
+      "label": "pose.js",
+      "sublabel": "MediaPipe Pose (lite)",
+      "pos": [
+        280,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "WASM + WebGL"
+    },
+    {
+      "id": "counter",
+      "type": "backend",
+      "label": "counter.js",
+      "sublabel": "RepCounter",
+      "pos": [
+        520,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "5 gates"
+    },
+    {
+      "id": "app",
+      "type": "frontend",
+      "label": "app.js",
+      "sublabel": "game loop + UI",
+      "pos": [
+        760,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "localStorage",
+      "sublabel": "pushupquest.v1",
+      "pos": [
+        1000,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "Export / Import"
+    },
+    {
+      "id": "sw",
+      "type": "cloud",
+      "label": "sw.js",
+      "sublabel": "Cache Storage",
+      "pos": [
+        760,
+        370
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "offline"
+    },
+    {
+      "id": "vercel",
+      "type": "external",
+      "label": "Vercel",
+      "sublabel": "pushup.ikechukwupeter.com",
+      "pos": [
+        1250,
+        370
+      ],
+      "size": [
+        210,
+        64
+      ],
+      "tag": "static hosting"
+    },
+    {
+      "id": "google",
+      "type": "external",
+      "label": "Google usage stats",
+      "sublabel": "odml.pa.googleapis.com",
+      "pos": [
+        260,
+        30
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "tag": "BLOCKED"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Your device (browser)",
+      "wraps": [
+        "camera",
+        "pose",
+        "counter",
+        "app",
+        "storage",
+        "sw"
+      ],
+      "pad": 36
+    },
+    {
+      "kind": "security-group",
+      "label": "CSP connect-src 'self'",
+      "wraps": [
+        "pose",
+        "counter",
+        "app",
+        "storage",
+        "sw"
+      ],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "id": "frames",
+      "from": "camera",
+      "to": "pose",
+      "label": "video frames",
+      "variant": "emphasis"
+    },
+    {
+      "id": "landmarks",
+      "from": "pose",
+      "to": "counter",
+      "label": "33 landmarks",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rep",
+      "from": "counter",
+      "to": "app",
+      "label": "rep",
+      "variant": "emphasis"
+    },
+    {
+      "id": "save",
+      "from": "app",
+      "to": "storage",
+      "label": "save",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cached",
+      "from": "sw",
+      "to": "app",
+      "label": "cached files"
+    },
+    {
+      "id": "hosting",
+      "from": "vercel",
+      "to": "sw",
+      "label": "first load + updates, HTTPS"
+    },
+    {
+      "id": "telemetry",
+      "from": "pose",
+      "to": "google",
+      "label": "blocked by CSP",
+      "variant": "dashed",
+      "labelAt": [
+        355,
+        120
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Rep gates (counter.js)",
+      "items": [
+        "Depth 0–1: elbow/knee angle + shoulder/hip drop vs calibrated limb length",
+        "Joints visible & in frame, tracking settled",
+        "Posture fits the exercise, hands/feet planted",
+        "Counts only a full top → bottom → top cycle"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Offline (sw.js)",
+      "items": [
+        "Precaches app shell, 3D art (~0.5 MB) and pose engine (~33 MB)",
+        "Pose: 33 landmarks per frame, GPU with CPU fallback, skeleton overlay"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Privacy",
+      "items": [
+        "Vendored MediaPipe in vendor/, usage-stats reporter patched off",
+        "CSP connect-src 'self' refuses any other origin",
+        "Vercel sees only IP + user agent, never video, reps or progress"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Vercel
+.vercel
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+
+# Environment variables
+.env
+.env*.local
+
+# Local test media (videos stay out of the repo; only extracted landmarks are committed)
+*.webm
+*.ogv
+*.mp4
+*.mjpeg
