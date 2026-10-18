@@ -5,3 +5,4 @@ docs/
 *.md
 package.json
 node_modules/
+.env*
