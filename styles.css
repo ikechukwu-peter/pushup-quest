@@ -453,4 +453,5 @@ img.big-ico { width: 64px; height: 64px; margin: 0 auto; }
 .privacy-more h4 { color: var(--text); font-size: 14px; margin: 16px 0 4px; }
 .privacy-more p { margin: 0; max-width: 62ch; }
 .opt-link { width: 100%; text-align: left; }
+a.opt-link { color: inherit; text-decoration: none; }
 .opt-link .chev { color: var(--mute); font-size: 22px; }

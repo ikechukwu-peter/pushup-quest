@@ -807,10 +807,20 @@ const PRIVACY_POINTS = [
   ['lock', 'Your hero, reps and history are stored only on this device.'],
   ['shield', 'No account, no ads, no analytics, no tracking.'],
 ];
+// Feedback opens a pre-filled GitHub issue in the browser. The app itself sends
+// nothing: only what the person types and submits on GitHub reaches the repo.
+const FEEDBACK_URL = 'https://github.com/ikechukwu-peter/pushup-quest/issues/new?' + new URLSearchParams({
+  title: 'Feedback: ',
+  body: [
+    'What happened?', '', '', 'What did you expect?', '', '',
+    'Exercise (pushups or squats):', 'Camera position (side or front, how far away):', 'Phone and browser:',
+  ].join('\n'),
+});
 const PRIVACY_DETAILS = [
   ['Camera', 'During a battle the camera feed goes to a pose model that runs inside the app on your device. It finds your joints in each frame to count reps, then throws the frame away. Nothing is recorded or saved, and the camera turns off as soon as you leave the battle.'],
   ['Your progress', 'Your name, reps, streaks, loot and settings are kept in this browser\'s storage on this device. Nobody else can see them. Deleting the app or clearing this site\'s data erases them, so use Export save to keep a backup. Reset all progress deletes everything right away.'],
   ['Internet', 'After the first visit the app works fully offline. It only ever connects to its own server, to download the app and its updates. A built-in security rule makes the browser block connections to anywhere else. The pose model from Google includes a usage-statistics report, and we switched it off.'],
+  ['Feedback', 'Send feedback in Settings opens a GitHub issue form in your browser. Nothing is sent from the app; only what you type and submit on GitHub is shared, publicly, under your GitHub account.'],
   ['What the server sees', 'Like any website, the server that hosts the app sees standard request details, such as your IP address, when your device downloads the app or an update. It never receives your video, reps or progress.'],
 ];
 const privacyCard = () => `<div class="card privacy">
@@ -841,6 +851,7 @@ function openSettings() {
       <div class="seg wide" data-group="sens"><button data-act="segpick" data-v="0" class="${st.sens === 0 ? 'on' : ''}">Strict</button><button data-act="segpick" data-v="1" class="${st.sens === 1 ? 'on' : ''}">Normal</button><button data-act="segpick" data-v="2" class="${st.sens === 2 ? 'on' : ''}">Easy</button></div>
     </div>
     <button class="opt opt-link" data-act="privacy"><div>Privacy<small>Your video and progress stay on this device.</small></div><span class="chev">›</span></button>
+    <a class="opt opt-link" href="${FEEDBACK_URL}" target="_blank" rel="noopener"><div>Send feedback<small>Opens GitHub in your browser. Only what you type is sent.</small></div><span class="chev">›</span></a>
     <div class="opt"><div>Show tracking details<small>Depth value and why reps are rejected, on the battle screen.</small></div><button class="toggle ${st.debug ? 'on' : ''}" data-act="tog" data-k="debug" aria-label="Tracking details"></button></div>
     <div class="opt"><div>Sound effects</div><button class="toggle ${st.sound ? 'on' : ''}" data-act="tog" data-k="sound" aria-label="Sound"></button></div>
     <div class="opt"><div>Vibration<small>Android only. iPhone doesn't let web apps vibrate.</small></div><button class="toggle ${st.haptics ? 'on' : ''}" data-act="tog" data-k="haptics" aria-label="Vibration"></button></div>

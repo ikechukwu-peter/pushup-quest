@@ -80,6 +80,7 @@ docs/architecture.html        interactive architecture diagram
 | `counter.js`, `app.js` | Landmarks, reps, your progress | Nothing. Progress is written to `localStorage` on this device. |
 | `sw.js` | Requests for the app's own files | Fetches app files from the host on the first visit and for updates. Nothing else. |
 | MediaPipe (`vendor/`) | Frames, and its own speed stats | Nothing. Upstream posts usage statistics to `odml.pa.googleapis.com` every 60 s. That is patched off in [vendor/vision_bundle.mjs](vendor/vision_bundle.mjs), and the CSP would block it anyway. |
+| Send feedback (Settings) | Nothing | Nothing from the app. It opens a pre-filled GitHub issue in the browser; only what the person types and submits is shared. |
 | The host (Vercel) | Ordinary request details (IP, user agent) when files are downloaded | Not applicable. It never receives video, reps or progress. |
 
 The [Content-Security-Policy](index.html#L12) (`connect-src 'self'`), also sent as a header by [vercel.json](vercel.json), makes the browser refuse any connection to another origin. To check it, I recorded every request during a 75-second camera battle. With the unpatched library, the browser blocked its usage report at about 60 s. With the patch, nothing tried to leave at all. The same promise is shown to users on first launch and under Settings → Privacy.
