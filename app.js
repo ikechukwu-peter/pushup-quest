@@ -159,7 +159,7 @@ const defaults = () => ({
   days: {}, sessions: [], ach: {}, bestStreak: 0, felled: {},
   inv: [], eq: { weapon: null, helm: null, armor: null, charm: null }, foundEpic: false,
   skin: 'guard', tone: 'default', owned: ['guard'],
-  settings: { goal: 50, sound: true, haptics: true, counting: 'camera', sens: 1, facing: 'user', debounce: 350, debug: false, voice: true },
+  settings: { goal: 50, sound: true, haptics: true, counting: 'camera', sens: 1, facing: 'user', debounce: 350, debug: false, voice: true, voiceRate: 1 },
   live: null, installDismissed: false, tipsSeen: false,
   freezes: 0,                                   // streak freezes held (max 2)
   plan: { id: 'fixed', start: null, base: 50 }, // daily goal plan, see goalFor()
@@ -332,6 +332,8 @@ const SFX = {
 // Spoken counts and coaching, so a set works with the phone on the floor.
 // Only on-device voices are used: some browsers (desktop Chrome) also offer
 // network voices that would send the text to a server.
+// iOS speaks fast at rate 1, so Normal is a little under it.
+const VOICE_RATES = [0.75, 0.9, 1.05];
 const Voice = {
   supported: 'speechSynthesis' in window,
   voice: null,
@@ -362,7 +364,7 @@ const Voice = {
     try {
       if (interrupt) speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.voice = this.voice; u.lang = this.voice.lang; u.rate = 1.1;
+      u.voice = this.voice; u.lang = this.voice.lang; u.rate = VOICE_RATES[S.settings.voiceRate] ?? VOICE_RATES[1];
       speechSynthesis.speak(u);
     } catch {}
   },
@@ -684,8 +686,11 @@ function render() {
 
 /* ================= battle ================= */
 let sess = null, tracker = null, lastTap = 0, dying = false, wake = null, lastStatus = '';
-// setup screen state: shown until the counter is armed, again after 3 s out of view
-let setupOn = false, armed = false, lostSince = null;
+// Setup screen: shown until the counter has held a clean top position for a
+// moment. It comes back only after a long absence (you walked off), never for
+// the brief dropouts a real plank causes, and never again once skipped.
+let setupOn = false, armed = false, lostSince = null, readySince = null, setupSkipped = false;
+const SETUP_RETURN_MS = 8000, ARM_HOLD_MS = 600;
 
 // Outline the camera should see, drawn over the video while getting into position.
 const SETUP_SVG = {
@@ -704,7 +709,7 @@ function openBattle() {
   ac();
   closeSheet();
   Voice.unlock();
-  setupOn = false; armed = false; lostSince = null;
+  setupOn = false; armed = false; lostSince = null; readySince = null; setupSkipped = false;
   sess = { t: Date.now(), n: 0, xp: 0, gold: 0, kills: 0, loot: [], ex: S.mode, lv0: levelInfo(S.xp).level, qn: 0, qsum: 0, perfect: 0, shallow: 0 };
   S.live = sess; save();
   const B = $('#battle');
@@ -828,15 +833,13 @@ function setStatus(text, cls = '', immediate = false) {
   lastStatus = key; pendStatus = ''; shownAt = now;
   const el = $('#bStatus'); if (!el) return;
   el.textContent = text; el.className = 'b-status ' + cls;
-  // Read setup problems aloud: you can't read the screen from the floor.
-  if (cls === 'warn' && !immediate && tracker) Voice.say(text, { every: 9000 });
 }
 
 function showSetup() {
   const el = $('#bSetup'); if (!el) return;
-  setupOn = true; armed = false;
+  setupOn = true; armed = false; readySince = null;
   el.hidden = false; $('#battle').classList.add('setup');
-  Voice.say('Get in position', { every: 4000 });
+  Voice.say('Get in position', { every: 20000 });
 }
 function hideSetup() {
   setupOn = false;
@@ -860,15 +863,23 @@ function onFrame(r, info = {}) {
   if (!tube) return;
   const now = performance.now();
   // The counter is armed once it has seen a clean top position: setup is done.
-  if (!armed && (r.state === 'top' || r.state === 'bottom')) {
-    armed = true;
-    if (setupOn) { hideSetup(); Voice.say(S.mode === 'squat' ? 'Ready. Squat!' : 'Ready. Go!', { interrupt: true }); }
+  if (!armed) {
+    if (r.state === 'top' || r.state === 'bottom') {
+      if (now - (readySince ??= now) >= ARM_HOLD_MS) {
+        armed = true;
+        if (setupOn) { hideSetup(); Voice.say(S.mode === 'squat' ? 'Ready. Squat!' : 'Ready. Go!', { interrupt: true, every: 20000 }); }
+      }
+    } else readySince = null;
   }
-  // Out of view for 3 s after starting: bring the guide back.
+  // Gone for a long while after starting (walked off): bring the guide back.
   if (r.visible) lostSince = null;
-  else if (armed && !setupOn && now - (lostSince ??= now) > 3000) showSetup();
+  else if (armed && !setupOn && !setupSkipped && now - (lostSince ??= now) > SETUP_RETURN_MS) showSetup();
   if (setupOn && info.joints) {
     $('#bParts').innerHTML = info.joints.parts.map(p => `<span class="part ${p.ok ? 'ok' : ''}">${p.ok ? '✓' : '·'} ${p.label}</span>`).join('');
+    // Everything is in view but it hasn't started: say what it's waiting for.
+    $('#bSetupTip').textContent = info.joints.ready
+      ? (S.mode === 'squat' ? 'Got you. Stand tall and hold still to start.' : 'Got you. Hold a straight-arm plank to start.')
+      : SETUP_TIP[S.mode];
   }
   tube.firstElementChild.style.height = Math.round(r.p * 100) + '%';
   tube.classList.toggle('deep', r.state === 'bottom');
@@ -878,6 +889,9 @@ function onFrame(r, info = {}) {
   else if (r.state === 'wait') setStatus(sq ? 'Stand tall and hold still' : 'Hold a straight-arm plank', 'warn');
   else if (r.state === 'top') setStatus(sq ? 'Squat down' : 'Go down', 'ok');
   else setStatus(sq ? 'Now stand up!' : 'Now push up!', 'ok');
+  // Read a problem aloud only if it lasts (you can't read the screen from the
+  // floor), so the brief dropouts of a normal set stay silent.
+  if (tracker && lastStatus.endsWith('|warn') && now - shownAt > 2500) Voice.say(lastStatus.split('|')[0], { every: 15000 });
   if (S.settings.debug) $('#bDebug').textContent = `depth ${r.p.toFixed(2)} · ${r.state}${r.reason ? ' · ' + r.reason : ''} · ${Math.round(info.fps || 0)} fps · model ${Math.round(info.modelMs || 0)} ms`;
 }
 
@@ -1029,7 +1043,7 @@ $('#battle').addEventListener('pointerdown', e => {
     if (a === 'end') endBattle();
     else if (a === 'undo') undoRep();
     else if (a === 'tapmode') startTapMode();
-    else if (a === 'skipsetup') { hideSetup(); armed = true; }
+    else if (a === 'skipsetup') { hideSetup(); armed = true; setupSkipped = true; lostSince = null; Voice.stop(); }
     else if (a === 'retry') startCamera();
     else if (a === 'flip') {
       S.settings.facing = S.settings.facing === 'user' ? 'environment' : 'user'; save();
@@ -1155,6 +1169,9 @@ function openSettings() {
     <a class="opt opt-link" href="${FEEDBACK_URL}" target="_blank" rel="noopener"><div>Report on GitHub<small>Opens a public issue form in your browser.</small></div><span class="chev">›</span></a>
     <div class="opt"><div>Show tracking details<small>Depth value and why reps are rejected, on the battle screen.</small></div><button class="toggle ${st.debug ? 'on' : ''}" data-act="tog" data-k="debug" aria-label="Tracking details"></button></div>
     <div class="opt"><div>Voice count and coaching<small>${Voice.supported ? 'Counts reps out loud and tells you what to fix, using your phone\'s built-in voice. Nothing is sent anywhere.' : 'Not available in this browser.'}</small></div><button class="toggle ${st.voice && Voice.supported ? 'on' : ''}" data-act="tog" data-k="voice" aria-label="Voice count and coaching" ${Voice.supported ? '' : 'disabled'}></button></div>
+    <div class="field"><label>Voice speed</label>
+      <div class="seg wide" data-group="voiceRate"><button data-act="segpick" data-v="0" class="${st.voiceRate === 0 ? 'on' : ''}">Slow</button><button data-act="segpick" data-v="1" class="${st.voiceRate === 1 ? 'on' : ''}">Normal</button><button data-act="segpick" data-v="2" class="${st.voiceRate === 2 ? 'on' : ''}">Fast</button></div>
+    </div>
     <div class="opt"><div>Sound effects</div><button class="toggle ${st.sound ? 'on' : ''}" data-act="tog" data-k="sound" aria-label="Sound"></button></div>
     <div class="opt"><div>Vibration<small>Android only. iPhone doesn't let web apps vibrate.</small></div><button class="toggle ${st.haptics ? 'on' : ''}" data-act="tog" data-k="haptics" aria-label="Vibration"></button></div>
     <div class="stack">
@@ -1231,6 +1248,7 @@ const ACTIONS = {
     S.settings.haptics = $('[data-k=haptics]').classList.contains('on');
     S.settings.debug = $('[data-k=debug]').classList.contains('on');
     S.settings.voice = $('[data-k=voice]').classList.contains('on');
+    S.settings.voiceRate = +(seg('voiceRate') ?? 1);
     save(); closeSheet(); render(); SFX.click();
   },
   begin() {
