@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, so a broken browser or dependency shows up even without pushes
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Unit + footage tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  smoke:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+      - name: App loads, camera + pose model start, nothing leaves the origin
+        run: npm run smoke
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}

@@ -25,6 +25,7 @@ const GRACE_MS = 400;   // posture must be wrong this long before a rep is aband
 const SETTLE_MS = 250;  // stable tracking needed before counting starts
 const TOP_HOLD_MS = 150;// time at the top before a rep can start
 const MIN_BOTTOM_MS = 120;
+const PARTIAL = 0.45;    // went at least this deep, then came back up: a shallow rep (not counted)
 const MAX_REP_MS = 20000;
 
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
@@ -42,6 +43,21 @@ export function angle(a, b, c) {
   const d = Math.hypot(ux, uy) * Math.hypot(vx, vy);
   if (!d) return 180;
   return Math.acos(clamp((ux * vx + uy * vy) / d, -1, 1)) * 180 / Math.PI;
+}
+
+/**
+ * Which body parts the camera can see well enough to count, for the setup screen.
+ * A part is ok if either side's joint is confident and inside the frame.
+ * Returns [{ key, label, ok }] in head-to-toe order; ready = every required part ok.
+ */
+export function jointStatus(pts, mode = 'pushup') {
+  const parts = mode === 'squat'
+    ? [['shoulders', 'Shoulders', LM.ls, LM.rs], ['hips', 'Hips', LM.lh, LM.rh], ['knees', 'Knees', LM.lk, LM.rk], ['ankles', 'Feet', LM.la, LM.ra]]
+    : [['shoulders', 'Shoulders', LM.ls, LM.rs], ['elbows', 'Elbows', LM.le, LM.re], ['wrists', 'Hands', LM.lw, LM.rw], ['hips', 'Hips', LM.lh, LM.rh]];
+  const list = parts.map(([key, label, a, b]) => ({ key, label, ok: !!pts && (ok(pts[a], key === 'hips' ? 0.5 : VIS) || ok(pts[b], key === 'hips' ? 0.5 : VIS)) }));
+  // Squats can count without the feet in view (see squat()), so they're advisory.
+  const ready = list.every(p => p.ok || p.key === 'ankles');
+  return { parts: list, ready };
 }
 
 export class RepCounter {
@@ -77,14 +93,17 @@ export class RepCounter {
     this.anchor = null;
     this.bottomAt = 0;
     this.repStart = 0;
+    this.peak = 0;
     this.reason = '';
   }
 
   /**
    * pts: landmarks in pixel space ({x, y, visibility, nx?, ny?}); nx/ny are the
    * normalized coords used for the in-frame check. t: ms timestamp.
-   * Returns {visible, posture, p, state, rep, reason}. reason explains why reps
-   * aren't being counted: nohips | upright | hands | noshoulders | notupright | moved | slow.
+   * Returns {visible, posture, p, state, rep, partial, quality, reason}.
+   * - rep: a full rep was just counted; quality = { depth: 0..1, ms } for it.
+   * - partial: a shallow rep just ended (went partway down, came back up). Not counted.
+   * - reason: why reps aren't being counted: nohips | upright | hands | noshoulders | notupright | moved | slow.
    */
   update(pts, t) {
     const m = pts ? (this.mode === 'squat' ? this.squat(pts) : this.pushup(pts)) : null;
@@ -116,7 +135,8 @@ export class RepCounter {
     this.p = this.p * 0.35 + m.p * 0.65;
     const scale = m.scale || 1;
     const moved = m.anchor && this.anchor ? drift(m.anchor, this.anchor) / scale : 0;
-    let rep = false;
+    let rep = false, partial = false, quality = null;
+    if (this.state !== 'wait' && this.p > this.up) this.peak = Math.max(this.peak, this.p);
 
     if (this.state === 'wait') {
       // Already calibrated earlier in this set (e.g. you just lay down or stepped
@@ -131,7 +151,11 @@ export class RepCounter {
       else {
         if (m.anchor && this.p <= this.up) this.anchor = this.anchor ? blend(this.anchor, m.anchor, 0.2) : m.anchor;
         if (this.p > this.up && !this.repStart) this.repStart = t;
-        if (this.p <= this.up) this.repStart = 0;
+        if (this.p <= this.up) {
+          // Came back up without reaching the bottom: a shallow rep if it went far enough.
+          if (this.repStart && this.peak >= PARTIAL) partial = true;
+          this.repStart = 0; this.peak = 0;
+        }
         if (this.p >= this.down) { this.state = 'bottom'; this.bottomAt = t; this.repStart ||= t; }
       }
     } else if (this.state === 'bottom') {
@@ -147,18 +171,21 @@ export class RepCounter {
       if (moved > 0.45) this.toWait('moved');
       else if (this.p >= this.down) { this.state = 'bottom'; }
       else if (this.p <= this.up) {
-        this.state = 'top'; this.repStart = 0;
-        if (t - this.lastRep >= this.minGap) { rep = true; this.reps++; this.lastRep = t; }
+        if (t - this.lastRep >= this.minGap) {
+          rep = true; this.reps++; this.lastRep = t;
+          quality = { depth: Math.min(1, this.peak), ms: t - this.repStart };
+        }
+        this.state = 'top'; this.repStart = 0; this.peak = 0;
       }
     }
-    return this.out(true, true, rep);
+    return this.out(true, true, rep, partial, quality);
   }
 
-  toWait(reason) { this.state = 'wait'; this.topSince = null; this.anchor = null; this.repStart = 0; this.reason = reason; }
+  toWait(reason) { this.state = 'wait'; this.topSince = null; this.anchor = null; this.repStart = 0; this.peak = 0; this.reason = reason; }
 
-  out(visible, posture, rep = false) {
+  out(visible, posture, rep = false, partial = false, quality = null) {
     const state = this.state === 'rising' ? 'bottom' : this.state;
-    return { visible, posture, p: this.p, state, rep, reason: this.reason };
+    return { visible, posture, p: this.p, state, rep, partial, quality, reason: this.reason };
   }
 
   // Reference limb length, measured while the limb is straight.

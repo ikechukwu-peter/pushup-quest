@@ -1,6 +1,6 @@
 // Camera + on-device pose tracking. Video frames never leave the phone.
 import { FilesetResolver, PoseLandmarker } from './vendor/vision_bundle.mjs';
-import { RepCounter, BONES, LM } from './counter.js';
+import { RepCounter, BONES, LM, jointStatus } from './counter.js';
 
 const base = new URL('./', import.meta.url);
 let landmarkerP = null;
@@ -23,10 +23,12 @@ function loadLandmarker() {
 }
 
 /**
- * Start tracking. Calls onFrame({visible, p, state}) every frame and onRep() per counted rep.
- * Returns a controller with stop().
+ * Start tracking. Calls onFrame(result, info) every frame, where result is the
+ * counter's output and info = { joints, fps, modelMs } (joints from jointStatus,
+ * for the setup screen; fps/modelMs for the speed readout). onRep(quality) fires
+ * per counted rep and onPartial() per shallow rep. Returns a controller with stop().
  */
-export async function startTracking({ video, canvas, mode, sensitivity = 1, facing = 'user', onFrame, onRep, onStatus }) {
+export async function startTracking({ video, canvas, mode, sensitivity = 1, facing = 'user', onFrame, onRep, onPartial, onStatus }) {
   onStatus?.('camera');
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
@@ -49,6 +51,8 @@ export async function startTracking({ video, canvas, mode, sensitivity = 1, faci
   const counter = new RepCounter(mode, { down, up: 0.3 });
   const ctx = canvas.getContext('2d');
   let running = true, lastVideoTime = -1, raf = 0;
+  // speed readout: frames processed per second and model time, smoothed
+  let fps = 0, modelMs = 0, lastT = 0;
 
   function frame() {
     if (!running) return;
@@ -57,14 +61,20 @@ export async function startTracking({ video, canvas, mode, sensitivity = 1, faci
     lastVideoTime = video.currentTime;
     const vw = video.videoWidth, vh = video.videoHeight;
     let res;
-    try { res = landmarker.detectForVideo(video, performance.now()); } catch { return; }
+    const t0 = performance.now();
+    try { res = landmarker.detectForVideo(video, t0); } catch { return; }
+    const t1 = performance.now();
+    modelMs = modelMs ? modelMs * 0.9 + (t1 - t0) * 0.1 : t1 - t0;
+    if (lastT) fps = fps ? fps * 0.9 + (1000 / (t0 - lastT)) * 0.1 : 1000 / (t0 - lastT);
+    lastT = t0;
     const lm = res.landmarks?.[0];
     // nx/ny (normalized) let the counter ignore joints the model guessed off-screen
     const pts = lm?.map(p => ({ x: p.x * vw, y: p.y * vh, nx: p.x, ny: p.y, visibility: p.visibility }));
     const r = counter.update(pts, performance.now());
     draw(ctx, canvas, video, pts, r);
-    onFrame?.(r);
-    if (r.rep) onRep?.();
+    onFrame?.(r, { joints: jointStatus(pts, counter.mode), fps, modelMs });
+    if (r.rep) onRep?.(r.quality);
+    if (r.partial) onPartial?.();
   }
   raf = requestAnimationFrame(frame);
 

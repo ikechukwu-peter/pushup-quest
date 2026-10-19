@@ -2,7 +2,8 @@
 // plus stress cases built from it that recreate failures seen on a real webcam.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadFixture, replay, rng } from './helpers.js';
+import { loadFixture, replay, rng, toPoints } from './helpers.js';
+import { RepCounter } from '../counter.js';
 
 const side = loadFixture('side-pushups');
 const squats = loadFixture('barbell-squats-back');
@@ -84,3 +85,17 @@ function deskIdle(secs = 40) {
 }
 test('sitting at the desk doing nothing counts no pushups', () => expectReps(deskIdle(), 'pushup', 0));
 test('sitting at the desk doing nothing counts no squats', () => expectReps(deskIdle(), 'squat', 0));
+
+test('real side-view pushups: no false "too shallow" cues, and every rep has a quality', () => {
+  const c = new RepCounter('pushup');
+  let partials = 0;
+  const qualities = [];
+  for (const f of side.frames) {
+    const r = c.update(toPoints(f.lm, side.width, side.height), f.t * 1000);
+    if (r.partial) partials++;
+    if (r.rep) qualities.push(r.quality);
+  }
+  assert.equal(qualities.length, 6);
+  assert.equal(partials, 0);
+  for (const q of qualities) assert.ok(q.depth > 0.7 && q.ms > 300, JSON.stringify(q));
+});

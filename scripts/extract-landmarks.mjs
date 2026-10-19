@@ -72,8 +72,9 @@ try {
   const seen = doc.frames.filter(f => f[1]).length;
   console.log(`${outPath}: ${doc.frames.length} frames, ${seen} with a pose`);
 } finally {
-  chrome?.kill();
+  // Wait for Chrome to exit before deleting its profile, or it may still be writing to it.
+  if (chrome && chrome.exitCode === null) { const gone = new Promise(r => chrome.once('exit', r)); chrome.kill(); await Promise.race([gone, sleep(5000)]); }
   server?.close();
   rmSync(frames, { recursive: true, force: true });
-  rmSync(profile, { recursive: true, force: true });
+  rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

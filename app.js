@@ -159,8 +159,11 @@ const defaults = () => ({
   days: {}, sessions: [], ach: {}, bestStreak: 0, felled: {},
   inv: [], eq: { weapon: null, helm: null, armor: null, charm: null }, foundEpic: false,
   skin: 'guard', tone: 'default', owned: ['guard'],
-  settings: { goal: 50, sound: true, haptics: true, counting: 'camera', sens: 1, facing: 'user', debounce: 350, debug: false },
+  settings: { goal: 50, sound: true, haptics: true, counting: 'camera', sens: 1, facing: 'user', debounce: 350, debug: false, voice: true },
   live: null, installDismissed: false, tipsSeen: false,
+  freezes: 0,                                   // streak freezes held (max 2)
+  plan: { id: 'fixed', start: null, base: 50 }, // daily goal plan, see goalFor()
+  lastBackup: 0, backupSnooze: 0,
 });
 let S;
 function load() {
@@ -170,6 +173,7 @@ function load() {
   S.settings = Object.assign(d.settings, S.settings);
   S.eq = Object.assign(d.eq, S.eq);
   S.byEx = Object.assign(d.byEx, S.byEx);
+  S.plan = Object.assign({ id: 'fixed', start: null, base: S.settings.goal }, S.plan);
   // v1 saves had no exercise split: count old reps as pushups
   if (S.v < 2) { S.byEx.pushup = S.total; S.v = 2; }
   // v2 pixel outfits -> v3 3D heroes at the same price points
@@ -180,12 +184,63 @@ function load() {
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }
 const todayRec = () => (S.days[dayKey()] ||= { n: 0, q: false });
 
+// A day keeps the streak if its goal was met, or a streak freeze covered it.
+const kept = k => !!(S.days[k]?.q || S.days[k]?.fz);
 function streak() {
   const d = new Date();
-  if (!S.days[dayKey(d)]?.q) d.setDate(d.getDate() - 1);
+  if (!kept(dayKey(d))) d.setDate(d.getDate() - 1);
   let s = 0;
-  while (S.days[dayKey(d)]?.q) { s++; d.setDate(d.getDate() - 1); }
+  while (kept(dayKey(d))) { s++; d.setDate(d.getDate() - 1); }
   return s;
+}
+
+// Missed a day or two? Spend held freezes to cover them, if the streak was alive
+// before the gap and there are enough freezes for the whole gap.
+function applyFreezes() {
+  if (!S.freezes) return;
+  const missed = [], d = daysAgo(1);
+  while (missed.length < 3 && !kept(dayKey(d))) { missed.push(dayKey(d)); d.setDate(d.getDate() - 1); }
+  if (!missed.length || !kept(dayKey(d)) || missed.length > S.freezes) return;
+  for (const k of missed) (S.days[k] ||= { n: 0, q: false }).fz = true;
+  S.freezes -= missed.length; save();
+  setTimeout(() => toast('snow', `Streak saved: ${streak()} days`, `${missed.length} freeze${missed.length > 1 ? 's' : ''} used`), 900);
+}
+
+/* Daily goal plans. The goal for a day is derived from history, so it never drifts:
+   - fixed: the goal you set.
+   - build: starts at your goal; each finished week you hit it 5+ days it grows 10%,
+            hit it 2 or fewer and it eases 10%.
+   - six:   a 6-week challenge, from your goal up to double it, then stays there. */
+const PLANS = {
+  fixed: { name: 'Fixed', short: 'Fixed', desc: 'The same goal every day.' },
+  build: { name: 'Build-up', short: 'Build-up', desc: 'Grows 10% each week you hit it 5+ days, eases 10% if you hit it 2 or fewer.' },
+  six: { name: '6-week challenge', short: '6 weeks', desc: 'Your goal to double it, a step up each week for six weeks.' },
+};
+const SIX = [1, 1.2, 1.4, 1.6, 1.8, 2];
+function weekOf(date = new Date()) {
+  if (!S.plan.start) return 0;
+  const [y, m, d] = S.plan.start.split('-').map(Number);
+  return Math.max(0, Math.floor((date - new Date(y, m - 1, d)) / (7 * 864e5)));
+}
+function goalFor(date = new Date()) {
+  const p = S.plan, base = p.base || S.settings.goal, w = weekOf(date);
+  if (p.id === 'six') return Math.round(base * SIX[Math.min(w, SIX.length - 1)]);
+  if (p.id !== 'build') return S.settings.goal;
+  let g = base;
+  const [y, m, d] = p.start.split('-').map(Number);
+  for (let i = 0; i < w; i++) {
+    let met = 0;
+    for (let j = 0; j < 7; j++) if (S.days[dayKey(new Date(y, m - 1, d + i * 7 + j))]?.q) met++;
+    g = met >= 5 ? Math.round(g * 1.1) : met <= 2 ? Math.max(5, Math.round(g * 0.9)) : g;
+  }
+  return g;
+}
+const goalToday = () => goalFor(new Date());
+function planLabel() {
+  const p = S.plan;
+  if (p.id === 'six') { const w = weekOf(); return w >= 6 ? '6-week challenge complete' : `6-week challenge · week ${w + 1} of 6`; }
+  if (p.id === 'build') return `Build-up plan · week ${weekOf() + 1}`;
+  return '';
 }
 
 function checkAch(ev) {
@@ -193,11 +248,13 @@ function checkAch(ev) {
 }
 
 /* Core: apply n reps of the current exercise. Returns events. */
-function applyReps(n, sess) {
+// dmgPer > 1 for a perfect-form rep: the monster takes more damage, but the rep
+// still counts as one rep. Reps are always what you actually did.
+function applyReps(n, sess, dmgPer = 1) {
   const ev = [], lv0 = levelInfo(S.xp).level, day = todayRec(), b = bonus();
   const xpPer = Math.round(10 * (1 + b.xp / 100));
   for (let r = 0; r < n; r++) {
-    S.total++; day.n++; S.byEx[S.mode] = (S.byEx[S.mode] || 0) + 1; S.xp += xpPer; S.dmg++;
+    S.total++; day.n++; S.byEx[S.mode] = (S.byEx[S.mode] || 0) + 1; S.xp += xpPer; S.dmg += dmgPer;
     if (sess) { sess.n++; sess.xp += xpPer; }
     const m = monsterFor(S.stage);
     if (S.dmg >= m.hp) {
@@ -210,14 +267,17 @@ function applyReps(n, sess) {
         if (loot.rar === 'epic' || loot.rar === 'legendary') S.foundEpic = true;
         trimInventory();
       }
-      if (sess) { sess.xp += xp; sess.gold += gold; sess.kills++; if (loot) sess.loot.push(loot); }
+      if (sess) { sess.xp += xp; sess.gold += gold; sess.kills++; sess.lastKill = { sp: m.sp, base: m.base, name: m.name }; if (loot) sess.loot.push(loot); }
       ev.push({ type: 'kill', m, xp, gold, loot });
     }
-    if (!day.q && day.n >= S.settings.goal) {
+    if (!day.q && day.n >= goalToday()) {
       day.q = true; S.xp += 100; S.gold += 25;
       if (sess) { sess.xp += 100; sess.gold += 25; }
-      S.bestStreak = Math.max(S.bestStreak, streak());
+      const st = streak();
+      S.bestStreak = Math.max(S.bestStreak, st);
       ev.push({ type: 'quest' });
+      // every 7 days of streak earns a freeze, up to 2 held
+      if (st > 0 && st % 7 === 0 && S.freezes < 2) { S.freezes++; ev.push({ type: 'freeze' }); }
     }
   }
   const setSize = sess ? sess.n : n;
@@ -264,7 +324,51 @@ const SFX = {
   loot() { [880, 1175, 1568].forEach((f, i) => tone(f, .12, 'sine', .08, i * .06)); },
   coin() { tone(988, .06, 'square', .04); tone(1319, .14, 'square', .04, .06); },
   click() { tone(660, .03, 'sine', .05); },
+  shallow() { tone(260, .16, 'sine', .07, 0, 170); },
+  perfect() { tone(880, .08, 'triangle', .07); tone(1320, .14, 'triangle', .07, .07); },
 };
+
+/* ================= voice ================= */
+// Spoken counts and coaching, so a set works with the phone on the floor.
+// Only on-device voices are used: some browsers (desktop Chrome) also offer
+// network voices that would send the text to a server.
+const Voice = {
+  supported: 'speechSynthesis' in window,
+  voice: null,
+  last: {},
+  pick() {
+    if (!this.supported) return null;
+    const local = speechSynthesis.getVoices().filter(v => v.localService);
+    this.voice = local.find(v => v.default && /^en/i.test(v.lang)) || local.find(v => /^en[-_]US/i.test(v.lang)) || local.find(v => /^en/i.test(v.lang)) || local[0] || null;
+    return this.voice;
+  },
+  // Must run inside a tap (iOS only allows speech that a gesture started).
+  unlock() {
+    if (!this.supported || !S.settings.voice) return;
+    try {
+      this.pick();
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0; if (this.voice) u.voice = this.voice;
+      speechSynthesis.speak(u);
+    } catch {} // speech is a nice-to-have; never let it stop a battle
+  },
+  // interrupt: drop anything queued (counts must never lag behind).
+  // every: don't repeat the same line within this many ms.
+  say(text, { interrupt = false, every = 0 } = {}) {
+    if (!this.supported || !S.settings.voice || !(this.voice || this.pick())) return;
+    const now = performance.now();
+    if (every && now - (this.last[text] ?? -1e9) < every) return;
+    this.last[text] = now;
+    try {
+      if (interrupt) speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.voice = this.voice; u.lang = this.voice.lang; u.rate = 1.1;
+      speechSynthesis.speak(u);
+    } catch {}
+  },
+  stop() { if (this.supported) speechSynthesis.cancel(); },
+};
+if (Voice.supported) speechSynthesis.addEventListener?.('voiceschanged', () => Voice.pick());
 const buzz = p => { if (S.settings.haptics && navigator.vibrate) navigator.vibrate(p); };
 
 /* ================= UI primitives ================= */
@@ -294,8 +398,10 @@ function confetti(n = 26) {
 }
 function sheet(html, mount) {
   const M = $('#sheet');
-  M.innerHTML = `<div class="sheet"><div class="grab"></div>${html}</div>`;
+  M.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" tabindex="-1"><div class="grab"></div>${html}</div>`;
   M.hidden = false;
+  M.querySelectorAll('.toggle').forEach(t => t.setAttribute('aria-pressed', t.classList.contains('on')));
+  M.firstElementChild.focus({ preventScroll: true });
   mount?.(M);
 }
 function closeSheet() { $('#sheet').hidden = true; $('#sheet').innerHTML = ''; }
@@ -303,7 +409,8 @@ $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet' && S.na
 
 function handleEvents(ev, inBattle) {
   for (const e of ev) {
-    if (e.type === 'quest') { toast('target', 'Daily goal complete!', '+100 XP · +25 gold'); SFX.coin(); }
+    if (e.type === 'quest') { toast('target', 'Daily goal complete!', '+100 XP · +25 gold'); SFX.coin(); if (inBattle) Voice.say('Daily goal complete!'); }
+    if (e.type === 'freeze') setTimeout(() => toast('snow', 'Streak freeze earned', `A missed day won't break your streak. ${S.freezes} held.`), 1200);
     if (e.type === 'ach') toast(e.a.icon, 'Deed unlocked: ' + e.a.name, `+${ACH_GOLD} gold`);
     if (e.type === 'kill' && !inBattle) toast(e.m.sp, `${e.m.name} felled!`, `+${e.xp} XP · +${e.gold} gold`);
     if (e.type === 'kill' && e.loot) setTimeout(() => { toast(SLOTS[e.loot.slot].em, `${e.loot.rar.toUpperCase()} DROP · ${e.loot.name}`, `+${e.loot.val}% ${e.loot.stat === 'xp' ? 'XP' : 'gold'}`); SFX.loot(); }, inBattle ? 900 : 300);
@@ -368,7 +475,7 @@ function openInstall() {
 let tab = 'home';
 const VIEWS = {
   home() {
-    const L = levelInfo(S.xp), m = monsterFor(S.stage), d = todayRec(), goal = S.settings.goal, st = streak();
+    const L = levelInfo(S.xp), m = monsterFor(S.stage), d = todayRec(), goal = goalToday(), st = streak(), plan = planLabel();
     const left = m.hp - S.dmg, b = bonus();
     const xpGain = Math.round(m.hp * 3 * (1 + b.xp / 100)), goldGain = Math.round(m.hp * 1.5 * (1 + b.gold / 100));
     const inst = installInfo();
@@ -376,7 +483,8 @@ const VIEWS = {
     const ex = EX[S.mode];
     const doneToday = d.q;
     const week = [];
-    for (let i = 6; i >= 0; i--) { const dd = daysAgo(i); week.push({ l: 'SMTWTFS'[dd.getDay()], lit: !!S.days[dayKey(dd)]?.q, today: i === 0 }); }
+    for (let i = 6; i >= 0; i--) { const dd = daysAgo(i), rec = S.days[dayKey(dd)]; week.push({ l: 'SMTWTFS'[dd.getDay()], lit: !!rec?.q, fz: !rec?.q && !!rec?.fz, today: i === 0 }); }
+    const backupDue = S.total >= 50 && Date.now() - (S.lastBackup || S.created) > 30 * 864e5 && Date.now() > (S.backupSnooze || 0);
     return `
       ${!inst.standalone && (inst.mobile || installPrompt) && !S.installDismissed ? `
       <div class="card install"><p>${inst.inApp ? 'Open this page in Safari or Chrome to install it.' : 'Install it to play full screen and offline.'}</p><button class="btn sm" data-act="install">How to install</button><button class="icon-btn" data-act="dismissInstall" aria-label="Dismiss">✕</button></div>` : ''}
@@ -389,12 +497,15 @@ const VIEWS = {
         <div class="xp-meta"><span class="c-orange">${fmt(d.n)} today</span><span class="dim num">${fmt(L.into)} / ${fmt(L.need)} XP</span></div>
       </div>
       <div class="motto">${art('sparkles', 'fl')}<span class="quote">“${motto}”</span></div>
+      ${backupDue ? `
+      <div class="card install backup">${art('save')}<p><b>Back up your progress.</b> It lives only on this phone, so a backup file protects it.</p><button class="btn sm" data-act="export">Back up</button><button class="icon-btn" data-act="snoozeBackup" aria-label="Remind me later">✕</button></div>` : ''}
 
       <div class="card streak-card">
         <div class="streak-ico">${art('fire')}</div>
         <div style="flex:1">
           <h4>${st ? `${st} day${st > 1 ? 's' : ''}. ${doneToday ? 'Kept alive.' : "Don't lose it."}` : 'Light your first streak.'}</h4>
           <p>${doneToday ? 'Daily goal crushed. Anything extra is pure glory.' : `Hit ${goal} reps today to ${st ? 'keep the flame burning' : 'start a streak'}.`}</p>
+          ${plan || S.freezes ? `<div class="streak-meta">${plan ? `<span class="chip">${art('calendar')}${plan}</span>` : ''}${S.freezes ? `<span class="chip blue" title="A missed day won't break your streak">${art('snow')}${S.freezes} freeze${S.freezes > 1 ? 's' : ''}</span>` : ''}</div>` : ''}
         </div>
         <div class="ring ${doneToday ? 'done' : ''}" style="--p:${Math.min(100, (d.n / goal) * 100)}"><span>${doneToday ? '✓' : `${d.n}<br><small class="dim">/${goal}</small>`}</span></div>
       </div>
@@ -421,7 +532,7 @@ const VIEWS = {
 
       <div class="card week">
         <div class="wk-streak"><b>${st}</b><span>STREAK</span></div>
-        ${week.map(w => `<div class="d ${w.lit ? 'lit' : ''} ${w.today ? 'today' : ''}">${art('fire', 'f')}${w.l}</div>`).join('')}
+        ${week.map(w => `<div class="d ${w.lit ? 'lit' : ''} ${w.fz ? 'fz' : ''} ${w.today ? 'today' : ''}">${art(w.fz ? 'snow' : 'fire', 'f')}${w.l}</div>`).join('')}
       </div>`;
   },
 
@@ -507,7 +618,7 @@ const VIEWS = {
   },
 
   hero() {
-    const L = levelInfo(S.xp), goal = S.settings.goal;
+    const L = levelInfo(S.xp), goal = goalToday();
     const days = [], vals = [];
     for (let i = 6; i >= 0; i--) { const d = daysAgo(i); days.push(d); vals.push(S.days[dayKey(d)]?.n || 0); }
     let prev = 0; for (let i = 7; i < 14; i++) prev += S.days[dayKey(daysAgo(i))]?.n || 0;
@@ -573,6 +684,18 @@ function render() {
 
 /* ================= battle ================= */
 let sess = null, tracker = null, lastTap = 0, dying = false, wake = null, lastStatus = '';
+// setup screen state: shown until the counter is armed, again after 3 s out of view
+let setupOn = false, armed = false, lostSince = null;
+
+// Outline the camera should see, drawn over the video while getting into position.
+const SETUP_SVG = {
+  pushup: `<svg viewBox="0 0 300 150" aria-hidden="true"><circle cx="62" cy="58" r="13"/><path d="M78 68 L250 104 M80 70 L84 116 M250 104 L278 110"/><path class="floor" d="M20 120 H290"/></svg>`,
+  squat: `<svg viewBox="0 0 160 300" aria-hidden="true"><circle cx="80" cy="40" r="17"/><path d="M80 60 V150 M80 78 L52 128 M80 78 L108 128 M80 150 L66 214 L68 280 M80 150 L94 214 L92 280"/><path class="floor" d="M20 286 H140"/></svg>`,
+};
+const SETUP_TIP = {
+  pushup: 'Phone on the floor, 1.5–2 m away, side-on. Get your whole upper body and hips in view.',
+  squat: 'Phone standing 2–3 m away. Get your shoulders, hips and knees in view.',
+};
 
 async function requestWake() { try { wake = await navigator.wakeLock?.request('screen'); } catch {} }
 document.addEventListener('visibilitychange', () => { if (sess && document.visibilityState === 'visible') requestWake(); });
@@ -580,7 +703,9 @@ document.addEventListener('visibilitychange', () => { if (sess && document.visib
 function openBattle() {
   ac();
   closeSheet();
-  sess = { t: Date.now(), n: 0, xp: 0, gold: 0, kills: 0, loot: [], ex: S.mode, lv0: levelInfo(S.xp).level };
+  Voice.unlock();
+  setupOn = false; armed = false; lostSince = null;
+  sess = { t: Date.now(), n: 0, xp: 0, gold: 0, kills: 0, loot: [], ex: S.mode, lv0: levelInfo(S.xp).level, qn: 0, qsum: 0, perfect: 0, shallow: 0 };
   S.live = sess; save();
   const B = $('#battle');
   B.className = '';
@@ -604,7 +729,7 @@ function openBattle() {
     <div class="b-foe" id="bFoe"></div>
     <div class="b-depth" id="bDepth"><span>DEPTH</span><div class="tube"><i></i><div class="tick"></div></div></div>
     <div class="b-bottom">
-      <div class="b-count num" id="bCount">0<small>reps</small></div>
+      <div class="b-count num" id="bCount" aria-live="polite">0<small>reps</small></div>
       <div class="b-cap" id="bCap"></div>
       <div class="tap-hint" id="bTapHint" hidden>Tap anywhere for each rep. Nose or chest works great.</div>
       <div class="b-loot"><span>XP <b id="bXp">0</b></span><span>Gold <b id="bGold">0</b></span><span>Felled <b id="bKills">0</b></span></div>
@@ -612,6 +737,15 @@ function openBattle() {
         <button class="btn sm ghost" data-bact="undo">${ico('undo')} Undo</button>
         <button class="btn sm ghost" data-bact="flip" id="bFlip">${ico('flip')} Flip</button>
         <button class="btn sm" data-bact="end">Finish</button>
+      </div>
+    </div>
+    <div class="b-setup" id="bSetup" hidden>
+      <div class="guide">${SETUP_SVG[S.mode]}</div>
+      <div class="setup-card" role="status">
+        <div class="setup-title">Get in position</div>
+        <div class="setup-tip" id="bSetupTip">${SETUP_TIP[S.mode]}</div>
+        <div class="setup-parts" id="bParts"></div>
+        <button class="btn sm ghost" data-bact="skipsetup">Skip</button>
       </div>
     </div>
     <div class="b-loading" id="bLoad"></div>`;
@@ -645,12 +779,13 @@ async function startCamera() {
       video: $('#battle video'), canvas: $('#battle canvas'),
       mode: S.mode, sensitivity: S.settings.sens, facing: S.settings.facing,
       onStatus: s => { if (s === 'model') showLoading('Summoning the pose spirit', 'Loading the on-device pose model. The first time takes a few seconds.', tips); },
-      onFrame, onRep: rep,
+      onFrame, onRep: rep, onPartial,
     });
     if (sess !== mySess) { t.stop(); return; }
     tracker = t;
     $('#bLoad').hidden = true;
     $('#bLoad').innerHTML = '';
+    showSetup();
   } catch (e) {
     if (sess !== mySess) return;
     console.warn(e);
@@ -674,6 +809,7 @@ function startTapMode() {
   $('#bDepth').hidden = true;
   $('#bFlip').hidden = true;
   $('#bTapHint').hidden = false;
+  hideSetup();
   setStatus('Tap mode', 'ok', true);
 }
 
@@ -692,6 +828,20 @@ function setStatus(text, cls = '', immediate = false) {
   lastStatus = key; pendStatus = ''; shownAt = now;
   const el = $('#bStatus'); if (!el) return;
   el.textContent = text; el.className = 'b-status ' + cls;
+  // Read setup problems aloud: you can't read the screen from the floor.
+  if (cls === 'warn' && !immediate && tracker) Voice.say(text, { every: 9000 });
+}
+
+function showSetup() {
+  const el = $('#bSetup'); if (!el) return;
+  setupOn = true; armed = false;
+  el.hidden = false; $('#battle').classList.add('setup');
+  Voice.say('Get in position', { every: 4000 });
+}
+function hideSetup() {
+  setupOn = false;
+  const el = $('#bSetup'); if (el) el.hidden = true;
+  $('#battle')?.classList.remove('setup');
 }
 
 // Why the counter is refusing to count, in plain words.
@@ -705,9 +855,21 @@ const REASONS = {
   slow: 'Rep took too long. Reset at the top',
 };
 
-function onFrame(r) {
+function onFrame(r, info = {}) {
   const tube = $('#bDepth .tube');
   if (!tube) return;
+  const now = performance.now();
+  // The counter is armed once it has seen a clean top position: setup is done.
+  if (!armed && (r.state === 'top' || r.state === 'bottom')) {
+    armed = true;
+    if (setupOn) { hideSetup(); Voice.say(S.mode === 'squat' ? 'Ready. Squat!' : 'Ready. Go!', { interrupt: true }); }
+  }
+  // Out of view for 3 s after starting: bring the guide back.
+  if (r.visible) lostSince = null;
+  else if (armed && !setupOn && now - (lostSince ??= now) > 3000) showSetup();
+  if (setupOn && info.joints) {
+    $('#bParts').innerHTML = info.joints.parts.map(p => `<span class="part ${p.ok ? 'ok' : ''}">${p.ok ? '✓' : '·'} ${p.label}</span>`).join('');
+  }
   tube.firstElementChild.style.height = Math.round(r.p * 100) + '%';
   tube.classList.toggle('deep', r.state === 'bottom');
   const sq = S.mode === 'squat';
@@ -716,8 +878,31 @@ function onFrame(r) {
   else if (r.state === 'wait') setStatus(sq ? 'Stand tall and hold still' : 'Hold a straight-arm plank', 'warn');
   else if (r.state === 'top') setStatus(sq ? 'Squat down' : 'Go down', 'ok');
   else setStatus(sq ? 'Now stand up!' : 'Now push up!', 'ok');
-  if (S.settings.debug) $('#bDebug').textContent = `depth ${r.p.toFixed(2)} · ${r.state}${r.reason ? ' · ' + r.reason : ''}`;
+  if (S.settings.debug) $('#bDebug').textContent = `depth ${r.p.toFixed(2)} · ${r.state}${r.reason ? ' · ' + r.reason : ''} · ${Math.round(info.fps || 0)} fps · model ${Math.round(info.modelMs || 0)} ms`;
 }
+
+// A shallow rep: went partway down and came back up. Not counted; say so.
+function onPartial() {
+  if (!sess) return;
+  sess.shallow++;
+  const d = document.createElement('div');
+  d.className = 'dmg shallow';
+  d.textContent = 'Lower!';
+  d.style.setProperty('--dx', '0px');
+  $('#bFoe')?.appendChild(d);
+  setTimeout(() => d.remove(), 800);
+  SFX.shallow(); buzz(60);
+  Voice.say(S.mode === 'squat' ? 'Lower' : 'Go lower', { every: 2500 });
+}
+
+// 0..1 form score for a counted rep: mostly depth past the counting line, partly tempo.
+function formScore(q) {
+  const down = [0.8, 0.7, 0.58][S.settings.sens] ?? 0.7;
+  const depth = Math.min(1, Math.max(0, (q.depth - down) / (0.97 - down)));
+  const tempo = Math.min(1, Math.max(0, (q.ms - 400) / 500));
+  return 0.7 * depth + 0.3 * tempo;
+}
+const isPerfect = q => !!q && q.depth >= 0.95 && q.ms >= 700;
 
 function renderFoe() {
   const m = monsterFor(S.stage), f = $('#bFoe');
@@ -748,22 +933,32 @@ function updateBattle() {
 
 function retrigger(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
 
-function rep() {
+function rep(quality) {
   if (!sess) return;
-  const ev = applyReps(1, sess), crit = Math.random() < .12;
+  if (setupOn) hideSetup();
+  const crit = isPerfect(quality);
+  if (quality) { sess.qn++; sess.qsum += formScore(quality); if (crit) sess.perfect++; }
+  const ev = applyReps(1, sess, crit ? 2 : 1);
   retrigger($('#bCount'), 'pop');
   const foeImg = $('#bFoe img');
   if (!dying) retrigger(foeImg, 'hit');
   const d = document.createElement('div');
   d.className = 'dmg' + (crit ? ' crit' : '');
-  d.textContent = crit ? 'CRIT!' : '−1';
+  d.textContent = crit ? 'PERFECT ×2' : '−1';
   d.style.setProperty('--dx', (Math.random() * 60 - 30) + 'px');
   $('#bFoe').appendChild(d);
   setTimeout(() => d.remove(), 800);
-  crit ? SFX.crit() : SFX.hit();
+  crit ? (SFX.crit(), SFX.perfect()) : SFX.hit();
   buzz(crit ? 30 : 15);
 
   const kill = ev.find(e => e.type === 'kill');
+  // Spoken count, plus what matters next: the kill, the last few reps, a level.
+  const m = monsterFor(S.stage), left = m.hp - S.dmg;
+  let line = String(sess.n);
+  if (kill) line += kill.m.boss ? '. Boss down!' : '. Felled!';
+  else if (left === 5 || left === 3 || left === 1) line += `. ${left} more`;
+  if (ev.some(e => e.type === 'level')) line += '. Level up!';
+  Voice.say(line, { interrupt: true });
   if (kill && !dying) {
     dying = true;
     $('#bHp').style.width = '0%';
@@ -791,15 +986,19 @@ function undoRep() {
   updateBattle();
 }
 
+let lastReport = null;
 function endBattle() {
   const s = sess; sess = null;
   tracker?.stop(); tracker = null; lastStatus = '';
+  Voice.stop(); setupOn = false;
   wake?.release?.().catch(() => {}); wake = null;
   $('#battle').hidden = true; $('#battle').innerHTML = '';
   finalizeSession(s);
   render();
   if (!s || s.n === 0) return;
   const lvNow = levelInfo(S.xp).level, mins = Math.max(1, Math.round((Date.now() - s.t) / 60000));
+  s.form = s.qn ? Math.round((s.qsum / s.qn) * 100) : null;
+  lastReport = s;
   sheet(`
     <div class="eyebrow c-gold">Battle report</div>
     <h2>${s.kills ? `${s.kills} foe${s.kills > 1 ? 's' : ''} felled` : 'The fight goes on'}</h2>
@@ -810,8 +1009,9 @@ function endBattle() {
       <div><b class="num c-gold">+${fmt(s.gold)}</b><span>gold</span></div>
       <div><b class="num">${s.loot.length}</b><span>loot drops</span></div>
     </div>
+    ${s.form !== null ? `<div class="form-row"><div class="form-ring" style="--p:${s.form}"><span>${s.form}%</span></div><div><b>Form</b><span>${s.perfect} perfect rep${s.perfect === 1 ? '' : 's'} (double damage)${s.shallow ? ` · ${s.shallow} too shallow` : ''}</span><span class="mute">Deeper, steadier reps score higher.</span></div></div>` : ''}
     ${s.loot.map(it => `<div class="item" style="--rc:${rarity(it.rar).c}"><div class="em">${art(SLOTS[it.slot].em)}</div><div><div class="nm">${esc(it.name)}</div><div class="meta"><span class="rar">${it.rar}</span><span class="dim">+${it.val}% ${it.stat === 'xp' ? 'XP' : 'gold'}</span></div></div></div>`).join('')}
-    <div class="stack"><button class="btn" data-act="close">Continue</button></div>`);
+    <div class="stack"><button class="btn" data-act="share">${art('party')}Share result</button><button class="btn ghost" data-act="close">Continue</button></div>`);
 }
 
 function finalizeSession(s) {
@@ -829,6 +1029,7 @@ $('#battle').addEventListener('pointerdown', e => {
     if (a === 'end') endBattle();
     else if (a === 'undo') undoRep();
     else if (a === 'tapmode') startTapMode();
+    else if (a === 'skipsetup') { hideSetup(); armed = true; }
     else if (a === 'retry') startCamera();
     else if (a === 'flip') {
       S.settings.facing = S.settings.facing === 'user' ? 'environment' : 'user'; save();
@@ -848,6 +1049,48 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (!e.repeat) rep(); }
   if (e.code === 'Escape') endBattle();
 });
+
+/* ================= share card ================= */
+// Draws a result image on the device and hands it to the phone's share sheet.
+// Nothing is uploaded unless the person chooses where to post it.
+const loadImg = src => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = src; });
+async function shareCard(s) {
+  const W = 1080, H = 1350, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const font = (w, px) => `${w} ${px}px -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif`;
+  // background: the app's night sky
+  x.fillStyle = '#0b0a14'; x.fillRect(0, 0, W, H);
+  const glow = (cx, cy, r, col) => { const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, W, H); };
+  glow(540, 430, 560, 'rgba(139,124,246,.35)'); glow(540, 900, 520, 'rgba(239,131,84,.18)');
+  x.fillStyle = 'rgba(255,255,255,.55)';
+  for (let i = 0; i < 40; i++) { x.beginPath(); x.arc((i * 263) % W, (i * 151) % 700, 1.6, 0, 7); x.fill(); }
+  // the foe felled last (or the one still standing)
+  const foe = s.lastKill || monsterFor(S.stage);
+  try { const im = await loadImg(`art/${foe.sp}.webp`); x.drawImage(im, 540 - 190, 150, 380, 380); } catch {}
+  x.textAlign = 'center'; x.fillStyle = '#f4f2fa';
+  x.font = font(800, 72);
+  x.fillText(s.kills ? `${foe.base || foe.name} felled!` : 'The fight goes on', 540, 640);
+  x.fillStyle = '#ef8354'; x.font = font(900, 190);
+  x.fillText(String(s.n), 540, 860);
+  x.fillStyle = '#cfcbe0'; x.font = font(600, 48);
+  x.fillText(EX[s.ex].many + (s.kills ? ` · ${s.kills} foe${s.kills > 1 ? 's' : ''} felled` : ''), 540, 935);
+  const bits = [];
+  if (s.form !== null && s.form !== undefined) bits.push(`Form ${s.form}%`);
+  const st = streak(); if (st) bits.push(`${st}-day streak`);
+  bits.push(`Level ${levelInfo(S.xp).level}`);
+  x.fillStyle = '#f5c84b'; x.font = font(700, 44);
+  x.fillText(bits.join('  ·  '), 540, 1020);
+  x.fillStyle = '#9a96ad'; x.font = font(600, 38);
+  x.fillText('Pushup Quest · pushup.ikechukwupeter.com', 540, 1250);
+  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  const file = new File([blob], `pushup-quest-${dayKey()}.png`, { type: 'image/png' });
+  const text = `${s.n} ${EX[s.ex].many}${s.kills ? `, ${s.kills} foe${s.kills > 1 ? 's' : ''} felled` : ''} in Pushup Quest. https://pushup.ikechukwupeter.com`;
+  if (navigator.canShare?.({ files: [file] })) { navigator.share({ files: [file], text }).catch(() => {}); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('party', 'Image saved', 'Post it wherever you like');
+}
 
 /* ================= settings / onboarding ================= */
 // Privacy promises shown on first launch and in Settings. Each line is enforced
@@ -893,8 +1136,12 @@ function openSettings() {
   sheet(`
     <h2>Settings</h2>
     <div class="field"><label>Hero name</label><input type="text" id="setName" maxlength="16" value="${esc(S.name)}"></div>
-    <div class="field"><label>Daily goal (reps)</label>
-      <div class="stepper"><button data-act="gstep" data-d="-5">−</button><input id="setGoal" type="number" inputmode="numeric" value="${st.goal}"><button data-act="gstep" data-d="5">+</button></div>
+    <div class="field"><label>Daily goal plan</label>
+      <div class="seg wide" data-group="plan">${Object.entries(PLANS).map(([id, p]) => `<button data-act="segpick" data-v="${id}" class="${S.plan.id === id ? 'on' : ''}">${p.short}</button>`).join('')}</div>
+      <p class="dim plan-desc" style="font-size:12.5px;margin:8px 2px 0" id="planDesc">${PLANS[S.plan.id].desc}${S.plan.id !== 'fixed' ? ` Today's goal: <b>${goalToday()}</b>.` : ''}</p>
+    </div>
+    <div class="field"><label>${S.plan.id === 'fixed' ? 'Daily goal (reps)' : 'Starting goal (reps)'}</label>
+      <div class="stepper"><button data-act="gstep" data-d="-5" aria-label="Less">−</button><input id="setGoal" type="number" inputmode="numeric" value="${S.plan.id === 'fixed' ? st.goal : S.plan.base}" aria-label="Goal"><button data-act="gstep" data-d="5" aria-label="More">+</button></div>
     </div>
     <div class="field"><label>Rep counting</label>
       <div class="seg wide" data-group="counting"><button data-act="segpick" data-v="camera" class="${st.counting === 'camera' ? 'on' : ''}">Camera</button><button data-act="segpick" data-v="tap" class="${st.counting === 'tap' ? 'on' : ''}">Tap</button></div>
@@ -907,6 +1154,7 @@ function openSettings() {
     <a class="opt opt-link" href="${FEEDBACK_MAIL}"><div>Email feedback<small>Opens a draft in your mail app. You choose what to send.</small></div><span class="chev">›</span></a>
     <a class="opt opt-link" href="${FEEDBACK_URL}" target="_blank" rel="noopener"><div>Report on GitHub<small>Opens a public issue form in your browser.</small></div><span class="chev">›</span></a>
     <div class="opt"><div>Show tracking details<small>Depth value and why reps are rejected, on the battle screen.</small></div><button class="toggle ${st.debug ? 'on' : ''}" data-act="tog" data-k="debug" aria-label="Tracking details"></button></div>
+    <div class="opt"><div>Voice count and coaching<small>${Voice.supported ? 'Counts reps out loud and tells you what to fix, using your phone\'s built-in voice. Nothing is sent anywhere.' : 'Not available in this browser.'}</small></div><button class="toggle ${st.voice && Voice.supported ? 'on' : ''}" data-act="tog" data-k="voice" aria-label="Voice count and coaching" ${Voice.supported ? '' : 'disabled'}></button></div>
     <div class="opt"><div>Sound effects</div><button class="toggle ${st.sound ? 'on' : ''}" data-act="tog" data-k="sound" aria-label="Sound"></button></div>
     <div class="opt"><div>Vibration<small>Android only. iPhone doesn't let web apps vibrate.</small></div><button class="toggle ${st.haptics ? 'on' : ''}" data-act="tog" data-k="haptics" aria-label="Vibration"></button></div>
     <div class="stack">
@@ -964,17 +1212,25 @@ const ACTIONS = {
   mode(b) { S.mode = b.dataset.m; save(); render(); SFX.click(); },
   gstep: b => clampInput('#setGoal', +b.dataset.d, 5, 1000),
   mstep: b => clampInput('#manualN', +b.dataset.d, 1, 500),
-  tog: b => b.classList.toggle('on'),
-  segpick(b) { $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b)); },
+  tog: b => b.setAttribute('aria-pressed', b.classList.toggle('on')),
+  segpick(b) {
+    $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b));
+    if (b.parentElement.dataset.group === 'plan') $('#planDesc').textContent = PLANS[b.dataset.v].desc;
+  },
   saveSettings() {
     const seg = g => $(`[data-group=${g}] .on`)?.dataset.v;
     S.name = $('#setName').value.trim().slice(0, 16) || S.name;
-    S.settings.goal = Math.max(5, Math.min(1000, parseInt($('#setGoal').value) || 50));
+    const goal = Math.max(5, Math.min(1000, parseInt($('#setGoal').value) || 50));
+    const planId = seg('plan') || 'fixed';
+    // A new plan, or a new starting goal, starts the plan over from today.
+    if (planId !== S.plan.id || (planId !== 'fixed' && goal !== S.plan.base)) S.plan = { id: planId, start: planId === 'fixed' ? null : dayKey(), base: goal };
+    if (planId === 'fixed') S.settings.goal = goal;
     S.settings.counting = seg('counting') || 'camera';
     S.settings.sens = +(seg('sens') ?? 1);
     S.settings.sound = $('[data-k=sound]').classList.contains('on');
     S.settings.haptics = $('[data-k=haptics]').classList.contains('on');
     S.settings.debug = $('[data-k=debug]').classList.contains('on');
+    S.settings.voice = $('[data-k=voice]').classList.contains('on');
     save(); closeSheet(); render(); SFX.click();
   },
   begin() {
@@ -1012,6 +1268,7 @@ const ACTIONS = {
   equipSkin(b) { S.skin = b.dataset.id; save(); render(); SFX.click(); },
   tone(b) { S.tone = b.dataset.t; save(); render(); SFX.click(); },
   export() {
+    S.lastBackup = Date.now(); save(); render();
     const blob = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' });
     const file = new File([blob], `pushup-quest-${dayKey()}.json`, { type: 'application/json' });
     if (navigator.canShare?.({ files: [file] })) { navigator.share({ files: [file] }).catch(() => {}); return; }
@@ -1019,6 +1276,8 @@ const ACTIONS = {
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   },
   import() { $('#importFile').click(); },
+  snoozeBackup() { S.backupSnooze = Date.now() + 14 * 864e5; save(); render(); },
+  share() { if (lastReport) shareCard(lastReport); },
   reset() {
     if (!confirm('Erase your hero and ALL progress? This cannot be undone.')) return;
     localStorage.removeItem(KEY); load(); closeSheet(); render(); onboarding();
@@ -1034,6 +1293,7 @@ document.addEventListener('click', e => {
 /* ================= boot ================= */
 load();
 if (S.live) finalizeSession(S.live); // battle interrupted by the app closing
+applyFreezes();
 $$('[data-ico]').forEach(i => { i.outerHTML = ico(i.dataset.ico); });
 render();
 if (!S.name) onboarding();
@@ -1045,7 +1305,7 @@ if (!S.name) onboarding();
   const wait = Math.max(0, 450 - performance.now());
   setTimeout(() => requestAnimationFrame(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }), wait);
 })();
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !sess) render(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !sess) { applyFreezes(); render(); } });
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // When an updated version installs, reload once so the new code runs (not mid-battle).
   const hadController = !!navigator.serviceWorker.controller;

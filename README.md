@@ -30,13 +30,20 @@ The diagram is interactive and self-contained: open [architecture.html](docs/arc
 - **Recovers quickly.** If you lie flat or step out briefly, it keeps your calibration and locks back on within about 0.1 s. Only after 3 s away does it start over. See [counter.js L119-L130](counter.js#L119-L130).
 - **Is a game, not a spreadsheet.** 6 zones of 10 stages with a boss each, and harder cycles after the last boss. Damage carries over between sessions. Loot gives bonus XP or gold but never extra reps, so what's counted is always what you did. There's a daily goal, streaks, 18 achievements and 6 heroes with skin tones. See [app.js L196-L230](app.js#L196-L230).
 - **Works offline.** The service worker caches the app, the 3D art (about 0.5 MB) and the pose engine (about 33 MB). Updates install in the background and apply on the next open. See [sw.js](sw.js).
+- **Works hands-free.** The phone counts reps out loud, calls out the last few reps and kills, and reads setup problems aloud ("Move back so your hips are in view too"). It uses only the phone's on-device voices. A rep that goes partway down plays a "too shallow" sound and says "Go lower".
+- **Guides you into position.** Before counting starts, an outline shows where your body should be and a checklist turns green as the camera finds your shoulders, elbows, hands and hips. Counting starts by itself once it can see you; the guide comes back if you leave the frame for 3 s.
+- **Rewards form.** Each counted rep reports its depth and tempo. Deep, controlled reps land a *perfect* hit (double damage; still one rep), and the battle report gives a form score.
+- **Keeps a streak alive.** Every 7 days of streak earns a freeze (up to 2) that covers a missed day automatically. Daily goals can follow a plan: fixed, build-up (adapts weekly to how often you hit it), or a 6-week challenge to double it.
+- **Shares a result card,** drawn on the device and handed to the phone's share sheet, and reminds you monthly to back up, since progress lives only on the phone.
 - **Has a tap mode.** With no camera, or if permission is denied, you tap the screen for each rep.
 
 ## Run it locally
 
 ```sh
 npm start                  # http://localhost:8765 (the camera works on localhost, otherwise it needs HTTPS)
-npm test                   # 23 tests: synthetic poses + replayed real footage. No browser, no camera.
+npm test                   # 28 tests: synthetic poses + replayed real footage. No browser, no camera.
+npm run smoke              # headless Chrome: app loads, camera + pose model start, nothing leaves the origin
+npm run smoke -- clip.mjpeg   # same, with a video as the camera; asserts the rep count (EXPECT_REPS, default 6)
 npm run extract -- <video> <out.json> --title T --author A --license L --url U
                            # turn any exercise video into a test fixture (needs ffmpeg + Chrome)
 ```
@@ -124,7 +131,7 @@ vercel deploy --prod
 - offline install
 - save export/import
 - privacy lock
-- 23 tests passing
+- 28 tests passing, plus a browser smoke test on every push (GitHub Actions)
 
 **Measured:** against real footage, replayed in [tests/footage.test.js](tests/footage.test.js). The results are in [docs/accuracy.md](docs/accuracy.md).
 - **Real reps:** 6 of 6 side-view pushups, 2 of 2 squats.
