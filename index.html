@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#0b0a14">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
@@ -17,10 +17,38 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
+<!-- iOS launch images: shown before the page loads, one per iPhone screen (portrait). Regenerate if the splash design changes. -->
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1260x2736.png" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="icons/splash/apple-splash-640x1136.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
 <link rel="modulepreload" href="pose.js">
 <link rel="stylesheet" href="styles.css">
+<!-- Splash: inline so it paints before the stylesheet and scripts arrive. app.js fades it out. -->
+<style>
+  #splash { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: radial-gradient(60% 38% at 50% 40%, rgba(139,124,246,.28), transparent 70%), radial-gradient(50% 30% at 50% 62%, rgba(239,131,84,.14), transparent 70%), #0b0a14;
+    color: #f4f2fa; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif; transition: opacity .35s ease; }
+  #splash img { width: 108px; height: 108px; border-radius: 26px; box-shadow: 0 18px 40px -12px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.08); }
+  #splash b { font-size: 26px; font-weight: 800; letter-spacing: -.02em; margin-top: 6px; }
+  #splash span { font-size: 14px; color: #9a96ad; }
+  #splash i { width: 22px; height: 22px; margin-top: 18px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.12); border-top-color: #ef8354; animation: splash-spin .8s linear infinite; }
+  #splash.out { opacity: 0; pointer-events: none; }
+  @keyframes splash-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #splash i { animation: none; } }
+</style>
 </head>
 <body>
+<div id="splash" aria-hidden="true"><img src="icons/icon-180.png" alt=""><b>Pushup Quest</b><span>Every rep is a strike.</span><i></i></div>
 <div class="sky" aria-hidden="true"></div>
 <div id="app">
   <main id="view"></main>

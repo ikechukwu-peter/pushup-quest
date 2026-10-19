@@ -1037,6 +1037,14 @@ if (S.live) finalizeSession(S.live); // battle interrupted by the app closing
 $$('[data-ico]').forEach(i => { i.outerHTML = ico(i.dataset.ico); });
 render();
 if (!S.name) onboarding();
+// Fade out the launch splash once the first screen is drawn (kept up at least
+// briefly so a fast load doesn't flash).
+(() => {
+  const el = document.getElementById('splash');
+  if (!el) return;
+  const wait = Math.max(0, 450 - performance.now());
+  setTimeout(() => requestAnimationFrame(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }), wait);
+})();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !sess) render(); });
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // When an updated version installs, reload once so the new code runs (not mid-battle).
