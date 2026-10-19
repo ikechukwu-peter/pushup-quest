@@ -1,8 +1,8 @@
 // Bump VERSION whenever you change app files so phones pick up the update.
-const VERSION = 'pq-v13';
+const VERSION = 'pq-v14';
 const VENDOR = 'pq-vendor-1.1.1-private'; // bump only when the files in vendor/ change
 const SHELL = [
-  './', 'index.html', 'styles.css', 'app.js', 'pose.js', 'counter.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'integrity.js', 'app.js', 'pose.js', 'counter.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 // 3D art (~0.5 MB, Fluent Emoji 3D, MIT).

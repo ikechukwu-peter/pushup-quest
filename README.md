@@ -41,7 +41,7 @@ The diagram is interactive and self-contained: open [architecture.html](docs/arc
 
 ```sh
 npm start                  # http://localhost:8765 (the camera works on localhost, otherwise it needs HTTPS)
-npm test                   # 28 tests: synthetic poses + replayed real footage. No browser, no camera.
+npm test                   # 36 tests: synthetic poses, replayed real footage, save integrity. No browser, no camera.
 npm run smoke              # headless Chrome: app loads, camera + pose model start, nothing leaves the origin
 npm run smoke -- clip.mjpeg   # same, with a video as the camera; asserts the rep count (EXPECT_REPS, default 6)
 npm run extract -- <video> <out.json> --title T --author A --license L --url U
@@ -62,6 +62,7 @@ index.html            shell, Content-Security-Policy, tab bar
 app.js                game state, views, battle screen, save/load, settings (classic script)
 pose.js               camera + MediaPipe Pose Landmarker + skeleton overlay (ES module, lazy-loaded)
 counter.js            RepCounter: landmarks → depth signal → gates → reps (pure, no DOM, tested)
+integrity.js          save signing, rebuild and plausibility checks (pure, no DOM, tested)
 sw.js                 offline cache: app shell + art + pose engine
 styles.css            the whole UI
 art/                  3D art (Fluent Emoji 3D, MIT), WebP
@@ -69,6 +70,7 @@ vendor/               MediaPipe tasks-vision 1.1.1 + pose model, vendored, telem
 
 tests/counter.test.js  synthetic poses with known geometry
 tests/footage.test.js  real exercise footage, replayed + stress cases built from it
+tests/integrity.test.js  honest saves pass, edited saves are caught
 tests/fixtures/        landmarks extracted from public videos, with licences
 scripts/serve.mjs      local static server
 scripts/extract-landmarks.*   video → fixture, using the app's own pose model
@@ -104,6 +106,8 @@ The [Content-Security-Policy](index.html#L12) (`connect-src 'self'`), also sent 
 
 **Headless Chrome does not repaint a seeked `<video>`.** The first batch of "measurements" was the first frame repeated hundreds of times. Fixtures are now made from JPEG frames fed as images ([scripts/extract-landmarks.html](scripts/extract-landmarks.html)).
 
+**A save on the player's phone can always be edited, so the app makes edits evident instead.** Every save is signed, totals are rebuilt from history, and gold, XP and progress are checked against the most that could have been earned. An edited save still plays, with a badge; a future leaderboard won't trust a phone's totals at all. See [decision 008](docs/decisions/008-tamper-evident-saves.md).
+
 **"Nothing leaves your phone" took code, not just copy.** The privacy notice was written last, after the network log showed it would be true.
 
 ## Deploy it
@@ -131,7 +135,7 @@ vercel deploy --prod
 - offline install
 - save export/import
 - privacy lock
-- 28 tests passing, plus a browser smoke test on every push (GitHub Actions)
+- 36 tests passing, plus a browser smoke test on every push (GitHub Actions)
 
 **Measured:** against real footage, replayed in [tests/footage.test.js](tests/footage.test.js). The results are in [docs/accuracy.md](docs/accuracy.md).
 - **Real reps:** 6 of 6 side-view pushups, 2 of 2 squats.

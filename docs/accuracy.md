@@ -54,7 +54,7 @@ The "Before the gates" column is the counter as it was when a user first reporte
 ## Rerun it
 
 ```sh
-npm test                                            # all 28 tests, about 1 s
+npm test                                            # all 36 tests, about 1 s
 npm run extract -- clip.webm tests/fixtures/new.json --title "..." --author "..." --license "..." --url "..."
 ```
 

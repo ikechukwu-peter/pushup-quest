@@ -17,5 +17,5 @@ Plain files. The app (HTML, CSS, JS) is about 1,900 lines and 115 KB before the 
 
 - There's nothing to install or upgrade, no supply chain beyond the vendored MediaPipe, and deploying is copying files.
 - The service worker can list exactly what to cache, because the files in the repo are the files served.
-- No type checker. `counter.js`, the part that must be right, is pure, has no DOM, and is covered by 28 tests instead, plus a browser smoke test in CI.
+- No type checker. `counter.js`, the part that must be right, is pure, has no DOM, and is covered by 36 tests instead, plus a browser smoke test in CI.
 - `app.js` renders views with template strings and one delegated click handler. That's fine at this size. Past a few more screens, a component framework would earn its keep.

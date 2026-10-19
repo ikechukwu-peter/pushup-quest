@@ -11,3 +11,4 @@ Each file records one non-obvious choice: the context, the options, what was pic
 | [005](005-privacy-enforced.md) | Enforcing privacy in code, not just stating it |
 | [006](006-no-build.md) | Plain files, no framework and no build step |
 | [007](007-footage-fixtures.md) | Testing against replayed real footage, not only synthetic poses |
+| [008](008-tamper-evident-saves.md) | Tamper-evident saves, not tamper-proof ones |

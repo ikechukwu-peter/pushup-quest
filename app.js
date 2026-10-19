@@ -153,7 +153,7 @@ const EX = { pushup: { one: 'pushup', many: 'pushups', label: 'Push-ups' }, squa
 /* ================= state ================= */
 const KEY = 'pushupquest.v1';
 const defaults = () => ({
-  v: 2, name: '', created: Date.now(),
+  v: 3, name: '', created: Date.now(),
   xp: 0, gold: 0, total: 0, best: 0, kills: 0, stage: 0, dmg: 0,
   byEx: { pushup: 0, squat: 0 }, mode: 'pushup',
   days: {}, sessions: [], ach: {}, bestStreak: 0, felled: {},
@@ -164,11 +164,18 @@ const defaults = () => ({
   freezes: 0,                                   // streak freezes held (max 2)
   plan: { id: 'fixed', start: null, base: 50 }, // daily goal plan, see goalFor()
   lastBackup: 0, backupSnooze: 0,
+  edited: null,                                 // { at, why[] } once a save looks changed outside the app (integrity.js)
 });
 let S;
+const integrityCfg = () => ({
+  hpAt: st => monsterFor(st).hp, cycle: CYCLE, achIds: ACH.map(a => a.id),
+  heroPrices: Object.fromEntries(HEROES.map(h => [h.id, h.price])),
+});
 function load() {
-  try { S = Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY)) || {}); }
-  catch { S = defaults(); }
+  let raw = null;
+  try { raw = JSON.parse(localStorage.getItem(KEY)); } catch {}
+  const verdict = raw ? Integrity.verify(raw) : 'ok'; // check before any migration touches it
+  S = Object.assign(defaults(), raw || {});
   const d = defaults();
   S.settings = Object.assign(d.settings, S.settings);
   S.eq = Object.assign(d.eq, S.eq);
@@ -180,8 +187,17 @@ function load() {
   const OLD = { crimson: 'guard', azure: 'ninja', verdant: 'elf', shadow: 'mage', ember: 'hero', gilded: 'royal' };
   S.skin = OLD[S.skin] || S.skin;
   S.owned = [...new Set(['guard', ...S.owned.map(o => OLD[o] || o)])];
+  S.v = 3;
+  if (raw) {
+    // Rebuild derivable totals, then flag anything that couldn't have been earned.
+    Integrity.repair(S);
+    const why = Integrity.check(S, integrityCfg());
+    if (verdict === 'mismatch' || verdict === 'unsigned') why.unshift('the save was changed outside the app');
+    if (why.length && !S.edited) S.edited = { at: Date.now(), why };
+    save();
+  }
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }
+function save() { try { S.sig = Integrity.sign(S); localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }
 const todayRec = () => (S.days[dayKey()] ||= { n: 0, q: false });
 
 // A day keeps the streak if its goal was met, or a streak freeze covered it.
@@ -637,6 +653,7 @@ const VIEWS = {
             <h3>${esc(S.name || 'Hero')}</h3>
             <div class="dim" style="font-size:12.5px">Lv ${L.level} · ${fmt(S.total)} lifetime reps</div>
             <div class="badge">${art('star')}${titleFor(L.level)}</div>
+            ${S.edited ? `<div class="edited" title="${esc(S.edited.why.join('; '))}">Edited save · changed outside the app</div>` : ''}
           </div>
         </div>
         <div class="between" style="margin:14px 0 7px;font-size:11px;font-weight:700;letter-spacing:.1em"><span class="dim">LEVEL ${L.level} → ${L.level + 1}</span><span class="dim num">${fmt(L.into)} / ${fmt(L.need)}</span></div>
@@ -1060,7 +1077,11 @@ $('#battle').addEventListener('pointerdown', e => {
 });
 document.addEventListener('keydown', e => {
   if (!sess) return;
-  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (!e.repeat) rep(); }
+  if (e.code === 'Space' || e.code === 'Enter') {
+    e.preventDefault();
+    const now = performance.now();
+    if (!e.repeat && now - lastTap >= S.settings.debounce) { lastTap = now; rep(); }
+  }
   if (e.code === 'Escape') endBattle();
 });
 
@@ -1106,6 +1127,7 @@ async function shareCard(s) {
   toast('party', 'Image saved', 'Post it wherever you like');
 }
 
+let pendingImport = null;
 /* ================= settings / onboarding ================= */
 // Privacy promises shown on first launch and in Settings. Each line is enforced
 // in code: on-device pose model, local storage only, and a Content-Security-Policy
@@ -1182,11 +1204,20 @@ function openSettings() {
     <input type="file" id="importFile" accept="application/json,.json" hidden>`, M => {
     $('#importFile', M).addEventListener('change', async e => {
       const f = e.target.files[0]; if (!f) return;
-      try {
-        const data = JSON.parse(await f.text());
-        if (typeof data.total !== 'number' || typeof data.days !== 'object') throw 0;
-        localStorage.setItem(KEY, JSON.stringify(data)); load(); closeSheet(); render(); toast('check', 'Save imported');
-      } catch { toast('lock', 'Invalid save file'); }
+      let data;
+      try { data = JSON.parse(await f.text()); } catch {}
+      if (!Integrity.looksLikeSave(data)) { toast('lock', 'Not a Pushup Quest save file'); return; }
+      const verdict = Integrity.verify(data);
+      const why = Integrity.check(Integrity.repair(JSON.parse(JSON.stringify(data))), integrityCfg());
+      if (verdict === 'mismatch' || verdict === 'unsigned') why.unshift('the file was changed after it was exported');
+      const doImport = () => { localStorage.setItem(KEY, JSON.stringify(data)); load(); closeSheet(); render(); toast('check', 'Save imported', S.edited ? 'Marked as edited' : ''); };
+      if (!why.length && !data.edited) { doImport(); return; }
+      pendingImport = doImport;
+      sheet(`
+        <h2>This save looks edited</h2>
+        <p class="dim" style="font-size:14px;margin:6px 0 12px">You can still import it and play, but it will be marked as edited for good${data.edited ? ' (it already is)' : ''}.</p>
+        <ul class="tips">${(data.edited?.why || why).map(w => `<li>${esc(w[0].toUpperCase() + w.slice(1))}</li>`).join('')}</ul>
+        <div class="stack"><button class="btn" data-act="importAnyway">Import anyway</button><button class="btn ghost" data-act="close">Cancel</button></div>`);
     });
   });
 }
@@ -1294,6 +1325,7 @@ const ACTIONS = {
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   },
   import() { $('#importFile').click(); },
+  importAnyway() { pendingImport?.(); pendingImport = null; },
   snoozeBackup() { S.backupSnooze = Date.now() + 14 * 864e5; save(); render(); },
   share() { if (lastReport) shareCard(lastReport); },
   reset() {
