@@ -1,5 +1,5 @@
 // Bump VERSION whenever you change app files so phones pick up the update.
-const VERSION = 'pq-v8';
+const VERSION = 'pq-v9';
 const VENDOR = 'pq-vendor-1.1.1-private'; // bump only when the files in vendor/ change
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'pose.js', 'counter.js', 'manifest.webmanifest',

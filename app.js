@@ -312,6 +312,58 @@ function handleEvents(ev, inBattle) {
   if (lv) setTimeout(() => { banner('LEVEL UP', `Level ${lv.level}`, `<span class="pill purple"><i></i>${titleFor(lv.level)}</span>`); confetti(40); SFX.level(); buzz([30, 40, 30, 40, 80]); }, inBattle && ev.some(e => e.type === 'kill') ? 1700 : 0);
 }
 
+/* ================= install guide ================= */
+// "Add to Home Screen" lives in different places per browser, and in-app browsers
+// (X, Instagram, WhatsApp...) can't install at all. Work out where we are and say so.
+function installInfo() {
+  const ua = navigator.userAgent;
+  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  const ios = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1); // iPadOS reports as a Mac
+  const android = /android/i.test(ua);
+  const inApp = /FBAN|FBAV|Instagram|Twitter|LinkedInApp|Line\/|Snapchat|TikTok|musical_ly|WhatsApp|GSA\//i.test(ua);
+  const browser = /CriOS/.test(ua) ? 'Chrome' : /FxiOS/.test(ua) ? 'Firefox' : /EdgiOS/.test(ua) ? 'Edge' : 'Safari';
+  return { standalone, ios, android, mobile: ios || android, inApp, browser };
+}
+let installPrompt = null; // Android/desktop Chrome hands us a real install prompt
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; if (!sess) render(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('check', 'Installed', 'Find Pushup Quest on your home screen'); });
+
+function installSteps(i) {
+  if (i.standalone) return ['You are already using the installed app.'];
+  if (i.inApp) return [
+    'This page is open inside another app, and its browser can\'t install apps.',
+    `Tap <b>•••</b> or the compass icon and choose <b>Open in ${i.ios ? 'Safari' : 'browser'}</b>. Or copy the link below and paste it there.`,
+    'Then come back to this guide in that browser.',
+  ];
+  if (i.ios && i.browser === 'Safari') return [
+    'Tap <b>•••</b> at the bottom right of Safari. On older iPhones, tap the <b>Share</b> button (a square with an arrow).',
+    'Tap <b>Share</b>, then scroll down or tap <b>View More</b>.',
+    'Tap <b>Add to Home Screen</b>, then <b>Add</b>.',
+  ];
+  if (i.ios) return [
+    `Tap the <b>Share</b> button in ${i.browser}'s address bar (top right), or open the menu and tap <b>Share</b>.`,
+    'Scroll down the list and tap <b>Add to Home Screen</b>.',
+    'Tap <b>Add</b>.',
+  ];
+  if (installPrompt && !i.ios) return ['Tap <b>Install now</b> below, then confirm.'];
+  if (i.android) return ['Open the browser menu <b>⋮</b> (top right).', 'Tap <b>Install app</b> or <b>Add to Home screen</b>.', 'Confirm.'];
+  return ['On a computer, click the install icon at the right of the address bar (Chrome or Edge).', 'On your phone, open <b>pushup.ikechukwupeter.com</b> and follow the steps there.'];
+}
+
+function openInstall() {
+  const i = installInfo();
+  sheet(`
+    <h2>Install Pushup Quest</h2>
+    <p class="dim" style="font-size:14px;margin:6px 0 14px">Installed, it opens full screen like an app and works offline.${i.standalone ? '' : ' It\'s free and takes a few seconds.'}</p>
+    <ol class="tips install-steps">${installSteps(i).map(t => `<li>${t}</li>`).join('')}</ol>
+    ${i.ios && !i.inApp && !i.standalone ? '<p class="dim" style="font-size:12.5px;margin:12px 0 0">No <b>Add to Home Screen</b> in the list? You are probably in another app\'s browser, such as X or Instagram. Open the page in Safari first.</p>' : ''}
+    <div class="stack">
+      ${installPrompt && !i.standalone && !i.ios && !i.inApp ? '<button class="btn" data-act="installNow">Install now</button>' : ''}
+      ${i.inApp ? '<button class="btn" data-act="copyLink">Copy link</button>' : ''}
+      <button class="btn ghost" data-act="close">Done</button>
+    </div>`);
+}
+
 /* ================= views ================= */
 let tab = 'home';
 const VIEWS = {
@@ -319,16 +371,15 @@ const VIEWS = {
     const L = levelInfo(S.xp), m = monsterFor(S.stage), d = todayRec(), goal = S.settings.goal, st = streak();
     const left = m.hp - S.dmg, b = bonus();
     const xpGain = Math.round(m.hp * 3 * (1 + b.xp / 100)), goldGain = Math.round(m.hp * 1.5 * (1 + b.gold / 100));
-    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+    const inst = installInfo();
     const motto = MOTTOS[Math.floor(Date.now() / 864e5) % MOTTOS.length];
     const ex = EX[S.mode];
     const doneToday = d.q;
     const week = [];
     for (let i = 6; i >= 0; i--) { const dd = daysAgo(i); week.push({ l: 'SMTWTFS'[dd.getDay()], lit: !!S.days[dayKey(dd)]?.q, today: i === 0 }); }
     return `
-      ${isIOS && !standalone && !S.installDismissed ? `
-      <div class="card install"><p>Tap <b>Share</b> → <b>Add to Home Screen</b> to install. It then runs full screen and works offline.</p><button class="btn sm ghost" data-act="dismissInstall">OK</button></div>` : ''}
+      ${!inst.standalone && (inst.mobile || installPrompt) && !S.installDismissed ? `
+      <div class="card install"><p>${inst.inApp ? 'Open this page in Safari or Chrome to install it.' : 'Install it to play full screen and offline.'}</p><button class="btn sm" data-act="install">How to install</button><button class="icon-btn" data-act="dismissInstall" aria-label="Dismiss">✕</button></div>` : ''}
       <header class="home-head">
         <div><div class="h-name">${esc(S.name || 'Hero')}</div><div class="h-sub">Level ${L.level} · ${titleFor(L.level)}</div></div>
         <div class="h-right"><span class="coin num">${art('coin')}${fmt(S.gold)}</span><button class="icon-btn" data-act="settings" aria-label="Settings">${art('gear')}</button></div>
@@ -851,6 +902,7 @@ function openSettings() {
     <div class="field"><label>Rep depth required</label>
       <div class="seg wide" data-group="sens"><button data-act="segpick" data-v="0" class="${st.sens === 0 ? 'on' : ''}">Strict</button><button data-act="segpick" data-v="1" class="${st.sens === 1 ? 'on' : ''}">Normal</button><button data-act="segpick" data-v="2" class="${st.sens === 2 ? 'on' : ''}">Easy</button></div>
     </div>
+    ${installInfo().standalone ? '' : '<button class="opt opt-link" data-act="install"><div>Install on your phone<small>Full screen and offline, from your home screen.</small></div><span class="chev">›</span></button>'}
     <button class="opt opt-link" data-act="privacy"><div>Privacy<small>Your video and progress stay on this device.</small></div><span class="chev">›</span></button>
     <a class="opt opt-link" href="${FEEDBACK_MAIL}"><div>Email feedback<small>Opens a draft in your mail app. You choose what to send.</small></div><span class="chev">›</span></a>
     <a class="opt opt-link" href="${FEEDBACK_URL}" target="_blank" rel="noopener"><div>Report on GitHub<small>Opens a public issue form in your browser.</small></div><span class="chev">›</span></a>
@@ -898,6 +950,17 @@ const ACTIONS = {
   privacy: openPrivacy,
   close: closeSheet,
   dismissInstall() { S.installDismissed = true; save(); render(); },
+  install: openInstall,
+  async installNow() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => {});
+    installPrompt = null; closeSheet(); render();
+  },
+  async copyLink(b) {
+    try { await navigator.clipboard.writeText(location.origin + '/'); b.textContent = 'Link copied'; }
+    catch { b.textContent = location.host; }
+  },
   mode(b) { S.mode = b.dataset.m; save(); render(); SFX.click(); },
   gstep: b => clampInput('#setGoal', +b.dataset.d, 5, 1000),
   mstep: b => clampInput('#manualN', +b.dataset.d, 1, 500),

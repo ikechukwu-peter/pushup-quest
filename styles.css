@@ -218,6 +218,9 @@ h1.title em.p { background-image: linear-gradient(90deg, #f0abfc, var(--pink)); 
 
 .install { display: flex; gap: 12px; align-items: center; border-color: rgba(124,180,255,.3); background: rgba(124,180,255,.07); }
 .install p { margin: 0; flex: 1; font-size: 13px; }
+.install .icon-btn { width: 32px; height: 32px; font-size: 13px; flex: none; }
+.install-steps li { margin-bottom: 8px; color: #d9d5e8; }
+.install-steps b { color: var(--text); }
 
 /* ---------- realm ---------- */
 .zone { padding: 0; overflow: hidden; }
